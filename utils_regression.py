@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 from sklearn import metrics
 from sklearn import model_selection
-from sklearn.base import RegressorMixin
+from sklearn.base import RegressorMixin, clone
 from collections.abc import Sequence, Callable
 
 def make_kfold(
@@ -53,7 +53,7 @@ def make_kfold(
     """
     data = data.copy()
     data['kfold'] = -1
-    data = data.sample(frac=1).reset_index(drop=True)
+    data = data.sample(frac=1, random_state=random_state).reset_index(drop=True)
     n_bins = round(1+np.log2(len(data)))
     data.loc[:, 'bins'] = pd.cut(
         data[target], bins=n_bins, labels=False
@@ -78,7 +78,6 @@ def make_kfold(
 
     return data
                    
-
 def train_with_kfolds(
     data: pd.DataFrame,
     models: dict[str, RegressorMixin],
@@ -86,7 +85,7 @@ def train_with_kfolds(
     target: str,
     folds: int = 5,
     scoring: Callable = metrics.root_mean_squared_error
-) -> dict[str, float]:
+) -> tuple[dict[str, list], dict[str, float]]:
     """
     Train multiple regression models using K-fold cross-validation.
 
@@ -115,9 +114,9 @@ def train_with_kfolds(
 
     Returns
     -------
-    dict[str, float]
-        Dictionary mapping each model name to its mean score across
-        all folds.
+    tuple[dict[str, list], dict[str, float]]
+        - First dictionary contains fold-wise scores.
+        - Second dictionary contains mean scores.
 
     Notes
     -----
@@ -140,6 +139,7 @@ def train_with_kfolds(
     ... )
     {'LinearRegression': 4.82, 'RandomForest': 3.15}
     """
+
     scores = {model_name: [] for model_name in models}
     for fold in range(folds):
         train = data[data.kfold != fold]
@@ -149,8 +149,9 @@ def train_with_kfolds(
         X_valid, y_valid = valid[features], valid[target]
 
         for model_name, model in models.items():
-            model.fit(X_train, y_train)
-            preds = model.predict(X_valid)
+            curr_model = clone(model)
+            curr_model.fit(X_train, y_train)
+            preds = curr_model.predict(X_valid)
             score = scoring(y_valid, preds)
             scores[model_name].append(score)
             print(
@@ -164,10 +165,144 @@ def train_with_kfolds(
         for model_name, model_scores in scores.items()
     }
 
-    return mean_scores
+    return scores, mean_scores
 
-def train_single_model():
+def train_single_model(
+    data: pd.DataFrame,
+    features: Sequence[str],
+    target: str,
+    model: RegressorMixin,
+    folds: int = 5,
+    scoring: Callable = metrics.root_mean_squared_error
+) -> tuple[list[float], float]:
+    """
+    Train a single regression model using K-fold cross-validation.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing the feature columns, target column,
+        and a 'kfold' column specifying fold assignments.
+
+    features : Sequence[str]
+        Names of the feature columns used for training.
+
+    target : str
+        Name of the target column.
+
+    model : RegressorMixin
+        Scikit-learn compatible regression estimator.
+
+    folds : int, default=5
+        Number of folds used for cross-validation.
+
+    scoring : Callable, default=metrics.root_mean_squared_error
+        Metric function used to evaluate predictions. Must accept
+        (y_true, y_pred) and return a scalar score.
+
+    Returns
+    -------
+    tuple[list[float], float]
+        A tuple containing:
+
+        - list[float]: Score obtained on each validation fold.
+        - float: Mean score across all folds.
+
+    Notes
+    -----
+    A fresh clone of the provided model is trained on each fold
+    using sklearn.base.clone to prevent state leakage between
+    folds.
+
+    This function assumes that the input DataFrame contains a
+    'kfold' column with values ranging from 0 to folds - 1.
+
+    Examples
+    --------
+    >>> from sklearn.ensemble import RandomForestRegressor
+    >>> scores, mean_score = train_single_model(
+    ...     data=df,
+    ...     features=feature_cols,
+    ...     target="price",
+    ...     model=RandomForestRegressor(),
+    ...     folds=5
+    ... )
+    >>> print(scores)
+    [2.81, 2.67, 2.74, 2.88, 2.79]
+    >>> print(mean_score)
+    2.778
+    """
+
+    scores = []
+    for fold in range(folds):
+        train = data[data.kfold != fold]
+        valid = data[data.kfold == fold]
+
+        X_train, y_train = train[features], train[target]
+        X_valid, y_valid = valid[features], valid[target]
+
+        curr_model = clone(model)
+        curr_model.fit(X_train, y_train)
+        preds = curr_model.predict(X_valid)
+        
+        score = scoring(y_valid, preds)
+        print(f"Fold {fold+1} | Score: {score}")
+        print("-"*50)
+        scores.append(score)
+
+    return scores, np.mean(scores)  
+    
+def make_oof_predictions(
+    data: pd.DataFrame,
+    features: Sequence[str],
+    target: str,
+    models: dict[str,RegressorMixin],
+    folds: int = 5,
+    scoring: Callable = metrics.root_mean_squared_error
+) -> tuple[
+    dict[str, np.ndarray],
+    dict[str, float]
+]:
+    oof_preds = {
+        model_name: np.zeros(len(data)) for model_name in models
+    }
+
+    for fold in range(folds):
+        train = data[data.kfold != fold]
+        valid = data[data.kfold == fold]
+
+        X_train, y_train = train[features], train[target]
+        X_valid = valid[features]
+
+        for model_name, model in models.items():
+            curr_model = clone(model)
+            curr_model.fit(X_train, y_train)
+            preds = curr_model.predict(X_valid)
+
+            score = scoring(
+                valid[target],
+                preds
+            )
+
+            oof_preds[model_name][valid.index] = preds
+            print(
+                f"Fold {fold+1} | "
+                f"{model_name}: {score:.4f}"
+            )
+        print("-"*50)
+
+    oof_scores = {
+        model_name: scoring(data[target], oof_preds[model_name])
+        for model_name in models
+    }
+
+    return oof_preds, oof_scores
+
+def feature_importance():
     pass
 
-def make_oof_predictions():
+def save_model():
+    pass
+
+def load_model():
     pass
