@@ -263,6 +263,91 @@ def make_oof_predictions(
     dict[str, np.ndarray],
     dict[str, float]
 ]:
+    """
+    Generate Out-Of-Fold (OOF) predictions for multiple regression models
+    using K-fold cross-validation.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing the feature columns, target column,
+        and a 'kfold' column specifying fold assignments.
+
+    features : Sequence[str]
+        Names of the feature columns used for training.
+
+    target : str
+        Name of the target column.
+
+    models : dict[str, RegressorMixin]
+        Dictionary mapping model names to scikit-learn compatible
+        regression estimators.
+
+    folds : int, default=5
+        Number of folds used for cross-validation.
+
+    scoring : Callable, default=metrics.root_mean_squared_error
+        Metric function used to evaluate predictions. Must accept
+        (y_true, y_pred) and return a scalar score.
+
+    Returns
+    -------
+    tuple[dict[str, np.ndarray], dict[str, float]]
+
+        A tuple containing:
+
+        - dict[str, np.ndarray]
+            Dictionary mapping each model name to its Out-Of-Fold
+            predictions. Each prediction array has the same length
+            as the input dataset.
+
+        - dict[str, float]
+            Dictionary mapping each model name to its overall OOF
+            score computed using the provided scoring metric.
+
+    Notes
+    -----
+    For each fold, a fresh clone of every estimator is trained on
+    all folds except the current validation fold. Predictions for
+    the validation fold are stored at their original row indices,
+    ensuring that every sample is predicted by a model that was
+    not trained on that sample.
+
+    Out-Of-Fold predictions provide an unbiased estimate of model
+    performance and are commonly used for:
+
+    - Cross-validation evaluation.
+    - Error analysis.
+    - Model comparison.
+    - Stacking and blending ensembles.
+
+    This function assumes that the input DataFrame contains a
+    'kfold' column with values ranging from 0 to folds - 1.
+
+    Examples
+    --------
+    >>> from sklearn.linear_model import LinearRegression
+    >>> from sklearn.ensemble import RandomForestRegressor
+
+    >>> models = {
+    ...     "LinearRegression": LinearRegression(),
+    ...     "RandomForest": RandomForestRegressor()
+    ... }
+
+    >>> oof_preds, oof_scores = make_oof_predictions(
+    ...     data=df,
+    ...     features=feature_cols,
+    ...     target="price",
+    ...     models=models,
+    ...     folds=5
+    ... )
+
+    >>> oof_scores
+    {
+        'LinearRegression': 2.81,
+        'RandomForest': 2.47
+    }
+    """
     oof_preds = {
         model_name: np.zeros(len(data)) for model_name in models
     }
