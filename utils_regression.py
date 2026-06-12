@@ -1,18 +1,12 @@
-# utils_regression.py
-# ├── make_kfold()
-# ├── train_with_kfolds()
-# ├── train_single_model()
-# ├── make_oof_predictions()
-# ├── feature_importance()
-# ├── save_model()
-# └── load_model()
-
 import pandas as pd
 import numpy as np
 from sklearn import metrics
 from sklearn import model_selection
 from sklearn.base import RegressorMixin, clone
 from collections.abc import Sequence, Callable
+
+from sklearn.utils.validation import check_is_fitted
+from sklearn.exceptions import NotFittedError
 
 def make_kfold(
     data: pd.DataFrame,
@@ -383,8 +377,124 @@ def make_oof_predictions(
 
     return oof_preds, oof_scores
 
-def feature_importance():
-    pass
+def feature_importance(
+    model: RegressorMixin,
+    features: Sequence[str],
+    method: str = 'auto'
+) -> pd.DataFrame:
+    """
+    Extract and rank feature importances from a fitted regression model.
+
+    Parameters
+    ----------
+    model : RegressorMixin
+        A fitted scikit-learn compatible regression estimator.
+
+        The estimator must expose either:
+
+        - ``feature_importances_`` (e.g. tree-based models), or
+        - ``coef_`` (e.g. linear models)
+
+        depending on the selected method.
+
+    features : Sequence[str]
+        Names of the feature columns corresponding to the model
+        inputs.
+
+    method : {"auto", "tree", "coefficients"}, default="auto"
+        Method used to extract feature importance values.
+
+        - ``"auto"``:
+            Automatically uses ``feature_importances_`` when
+            available, otherwise falls back to ``coef_``.
+        - ``"tree"``:
+            Uses ``feature_importances_``.
+        - ``"coefficients"``:
+            Uses ``coef_``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing:
+
+        - ``feature`` : Feature name.
+        - ``importance`` : Importance value associated with the
+          feature.
+
+        The DataFrame is sorted in descending order of importance.
+
+    Raises
+    ------
+    ValueError
+        If:
+
+        - ``method`` is not one of
+          ``{"auto", "tree", "coefficients"}``.
+        - The estimator does not expose the required attribute for
+          the selected method.
+        - Feature importances cannot be extracted from the model.
+
+    Notes
+    -----
+    The model must be fitted before calling this function.
+
+    For tree-based estimators such as RandomForestRegressor and
+    XGBRegressor, importances are obtained from
+    ``feature_importances_``.
+
+    For linear estimators such as LinearRegression, Ridge, and
+    Lasso, importances are obtained from ``coef_``.
+
+    Examples
+    --------
+    >>> model.fit(X_train, y_train)
+    >>> feature_importance(
+    ...     model=model,
+    ...     features=X_train.columns
+    ... )
+         feature  importance
+    0      area    0.4215
+    1  bedrooms    0.2318
+    2       age    0.1182
+    """
+
+    try:
+        check_is_fitted(model)
+    except NotFittedError:
+        raise ValueError(
+            f"{type(model).__name__} must fitted before "
+            "calling feature_importance()"
+        )
+
+    if method not in ['auto', 'tree', 'coefficients']:
+        raise ValueError("method parameter is wrong. it must be one of ['auto', 'tree', 'coefficients']")
+    if method == 'auto':
+        if hasattr(model, "feature_importances_"):
+            imp = np.array(model.feature_importances_)
+        elif hasattr(model, "coef_"):
+            imp = np.array(model.coef_)
+        else:
+            raise ValueError(f"Cannot extract importances from {type(model).__name__}.")
+    elif method == 'tree':
+        if not hasattr(model, "feature_importances_"):
+            raise ValueError(
+                f"{type(model).__name__} does not support tree importances."
+            )
+        imp = np.array(model.feature_importances_)
+    elif method == 'coefficients':
+        if not hasattr(model, "coef_"):
+            raise ValueError(
+                f"{type(model).__name__} does not expose coefficients."
+            )
+        imp = np.array(model.coef_)
+
+    imp = np.atleast_1d(imp)
+    df = pd.DataFrame({
+        "feature": features,
+        "importance": imp
+    }).sort_values("importance", ascending=False).reset_index(drop=True)
+
+    return df
 
 def save_model():
     pass
