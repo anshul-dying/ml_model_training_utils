@@ -8,6 +8,8 @@ from collections.abc import Sequence, Callable
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
 
+import pickle
+
 def make_kfold(
     data: pd.DataFrame,
     target: str,
@@ -496,8 +498,49 @@ def feature_importance(
 
     return df
 
-def save_model():
-    pass
+def save_model(
+    model: RegressorMixin,
+    path: str
+):
+    """
+    Save a fitted regression model to disk using pickle.
 
-def load_model():
-    pass
+    Parameters
+    ----------
+    model : RegressorMixin
+        The fitted scikit-learn compatible regression estimator to save.
+    path : str
+        The file path where the model should be saved.
+
+    Raises
+    ------
+    ValueError
+        If the model is not fitted before saving.
+    """
+    try:
+        check_is_fitted(model)
+    except NotFittedError:
+        raise ValueError(
+            f"{type(model).__name__} must be fitted before saving."
+        )
+    
+    with open(path, 'wb') as file:
+        pickle.dump(model, file)
+    
+def load_model(path: str):
+    """
+    Load a saved regression model from disk using pickle.
+
+    Parameters
+    ----------
+    path : str
+        The file path from which to load the model.
+
+    Returns
+    -------
+    RegressorMixin or Any
+        The loaded estimator or object.
+    """
+    with open(path, 'rb') as f:
+        model = pickle.load(f)
+    return model
